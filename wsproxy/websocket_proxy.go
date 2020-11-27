@@ -2,6 +2,7 @@ package wsproxy
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -10,7 +11,6 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/rs/zerolog/log"
-	"golang.org/x/net/context"
 )
 
 const (
