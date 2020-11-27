@@ -2,6 +2,7 @@ package wsproxy
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -10,7 +11,6 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 )
 
 // MethodOverrideParam defines the special URL parameter that is translated into the subsequent proxied streaming http request's method.
@@ -180,11 +180,11 @@ func (p *Proxy) proxy(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
-	ctx, cancelFn := context.WithCancel(context.Background())
+	ctx, cancelFn := context.WithCancel(r.Context())
 	defer cancelFn()
 
 	requestBodyR, requestBodyW := io.Pipe()
-	request, err := http.NewRequest(r.Method, r.URL.String(), requestBodyR)
+	request, err := http.NewRequestWithContext(r.Context(), r.Method, r.URL.String(), requestBodyR)
 	if err != nil {
 		p.logger.Warnln("error preparing request:", err)
 		return
