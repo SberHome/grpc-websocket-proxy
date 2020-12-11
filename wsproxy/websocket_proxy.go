@@ -146,14 +146,6 @@ var upgrader = websocket.Upgrader{
 	CheckOrigin:     func(r *http.Request) bool { return true },
 }
 
-func isClosedConnError(err error) bool {
-	str := err.Error()
-	if strings.Contains(str, "use of closed network connection") {
-		return true
-	}
-	return websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway)
-}
-
 func (p *Proxy) proxy(w http.ResponseWriter, r *http.Request) {
 	var responseHeader http.Header
 	// If Sec-WebSocket-Protocol starts with "Bearer", respond in kind.
@@ -174,7 +166,7 @@ func (p *Proxy) proxy(w http.ResponseWriter, r *http.Request) {
 	defer cancelFn()
 
 	requestBodyR, requestBodyW := io.Pipe()
-	request, err := http.NewRequest(r.Method, r.URL.String(), requestBodyR)
+	request, err := http.NewRequestWithContext(ctx, r.Method, r.URL.String(), requestBodyR)
 	if err != nil {
 		log.Warn().Err(err).Msg("error preparing request:")
 		return
@@ -222,6 +214,7 @@ func (p *Proxy) proxy(w http.ResponseWriter, r *http.Request) {
 		}
 		defer func() {
 			cancelFn()
+			log.Debug().Msg("Closed")
 		}()
 		for {
 			select {
@@ -233,22 +226,24 @@ func (p *Proxy) proxy(w http.ResponseWriter, r *http.Request) {
 			log.Debug().Msg("[read] reading from socket.")
 			_, payload, err := conn.ReadMessage()
 			if err != nil {
-				if isClosedConnError(err) {
-					log.Debug().Err(err).Msg("[read] websocket closed:")
-					return
-				}
-				log.Warn().Err(err).Msg("error reading websocket message:")
-				return
+				log.Debug().Str("err", err.Error()).Msg("error reading websocket message:")
+				break
 			}
 			log.Debug().Str("payload", string(payload)).Msg("[read] read payload:")
 			log.Debug().Msg("[read] writing to requestBody:")
+
+			// TODO: Add some condition here. We should not try to write into a non-streaming input.
 			n, err := requestBodyW.Write(payload)
-			_, _ = requestBodyW.Write([]byte("\n"))
-			log.Debug().Int("n", n).Msg("[read] wrote to requestBody")
 			if err != nil {
 				log.Warn().Err(err).Msg("[read] error writing message to upstream http server:")
 				return
 			}
+			_, err = requestBodyW.Write([]byte("\n"))
+			if err != nil {
+				log.Warn().Err(err).Msg("[read] error writing message to upstream http server:")
+				return
+			}
+			log.Debug().Int("n", n).Msg("[read] wrote to requestBody")
 		}
 	}()
 	// ping write loop
