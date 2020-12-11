@@ -162,7 +162,7 @@ func (p *Proxy) proxy(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
-	ctx, cancelFn := context.WithCancel(context.Background())
+	ctx, cancelFn := context.WithCancel(r.Context())
 	defer cancelFn()
 
 	requestBodyR, requestBodyW := io.Pipe()
@@ -285,7 +285,7 @@ func (p *Proxy) proxy(w http.ResponseWriter, r *http.Request) {
 		}
 		log.Debug().Str("text", scanner.Text()).Msg("[write] scanned")
 		if err = conn.WriteMessage(websocket.TextMessage, scanner.Bytes()); err != nil {
-			log.Warn().Err(err).Msg("[write] error writing websocket message:")
+			log.Info().Err(err).Msg("[write] error writing websocket message:")
 			return
 		}
 	}
