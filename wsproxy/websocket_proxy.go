@@ -17,6 +17,7 @@ const (
 	defaultMethodOverrideParam = "method"
 	defaultTokenCookieName     = "token"
 	defaultAuthHeaderName      = "Authorization"
+	defaultWriteDuration       = 100 * time.Millisecond
 )
 
 // RequestMutatorFunc can supply an alternate outgoing request.
@@ -34,6 +35,7 @@ type Proxy struct {
 	pingInterval           time.Duration
 	pingWait               time.Duration
 	pongWait               time.Duration
+	writeDuration          time.Duration
 }
 
 func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -102,6 +104,12 @@ func WithAuthorizationHeaderName(headerName string) Option {
 	}
 }
 
+func WithWriteDeadline(dur time.Duration) Option {
+	return func(proxy *Proxy) {
+		proxy.writeDuration = dur
+	}
+}
+
 var defaultHeadersToForward = map[string]bool{
 	"Origin":  true,
 	"origin":  true,
@@ -132,6 +140,7 @@ func WebsocketProxy(h http.Handler, opts ...Option) http.Handler {
 		tokenCookieName:     defaultTokenCookieName,
 		authHeaderName:      defaultAuthHeaderName,
 		headerForwarder:     defaultHeaderForwarder,
+		writeDuration:       defaultWriteDuration,
 	}
 	for _, o := range opts {
 		o(p)
@@ -160,7 +169,9 @@ func (p *Proxy) proxy(w http.ResponseWriter, r *http.Request) {
 		log.Warn().Err(err).Msg("error upgrading websocket:")
 		return
 	}
-	defer conn.Close()
+	defer func() {
+		_ = conn.Close()
+	}()
 
 	ctx, cancelFn := context.WithCancel(r.Context())
 	defer cancelFn()
@@ -210,7 +221,10 @@ func (p *Proxy) proxy(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		if p.pingInterval > 0 && p.pingWait > 0 && p.pongWait > 0 {
 			_ = conn.SetReadDeadline(time.Now().Add(p.pongWait))
-			conn.SetPongHandler(func(string) error { _ = conn.SetReadDeadline(time.Now().Add(p.pongWait)); return nil })
+			conn.SetPongHandler(func(string) error {
+				_ = conn.SetReadDeadline(time.Now().Add(p.pongWait))
+				return nil
+			})
 		}
 		defer func() {
 			cancelFn()
@@ -284,6 +298,8 @@ func (p *Proxy) proxy(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		log.Debug().Str("text", scanner.Text()).Msg("[write] scanned")
+
+		_ = conn.SetWriteDeadline(time.Now().Add(p.writeDuration))
 		if err = conn.WriteMessage(websocket.TextMessage, scanner.Bytes()); err != nil {
 			log.Info().Err(err).Msg("[write] error writing websocket message:")
 			return
