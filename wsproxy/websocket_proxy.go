@@ -293,6 +293,13 @@ func (p *Proxy) proxy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for scanner.Scan() {
+		select {
+		case <-ctx.Done():
+			log.Debug().Msg("gracefully stopping websocket")
+			_ = conn.WriteControl(websocket.CloseMessage, nil, time.Now().Add(p.writeDuration))
+			return
+		default:
+		}
 		if len(scanner.Bytes()) == 0 {
 			log.Warn().Err(scanner.Err()).Msg("[write] empty scan")
 			continue
