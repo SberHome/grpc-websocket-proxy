@@ -189,6 +189,21 @@ func (p *Proxy) proxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}()
 
+	go func() {
+		select {
+		case <-ctx.Done():
+			return
+		case <-p.ctx.Done():
+			log.Debug().Msg("Send close message")
+			if err = conn.WriteControl(websocket.CloseMessage, []byte(""), time.Now().Add(p.writeDuration)); err != nil {
+				log.Debug().Err(err).Msg("Close message error")
+			}
+			cancelFn()
+			log.Debug().Msg("Cancel request")
+			return
+		}
+	}()
+
 	requestBodyR, requestBodyW := io.Pipe()
 	request, err := http.NewRequestWithContext(ctx, r.Method, r.URL.String(), requestBodyR)
 	if err != nil {
