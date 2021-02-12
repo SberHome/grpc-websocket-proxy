@@ -175,23 +175,12 @@ func (p *Proxy) proxy(w http.ResponseWriter, r *http.Request) {
 		_ = conn.Close()
 	}()
 
-	ctx, cancelFn := context.WithCancel(r.Context())
+	requestCtx, cancelFn := context.WithCancel(r.Context())
 	defer cancelFn()
 
 	go func() {
-		<-p.ctx.Done()
-		log.Debug().Msg("Send close message")
-		if err = conn.WriteControl(websocket.CloseMessage, []byte(""), time.Now().Add(p.writeDuration)); err != nil {
-			log.Debug().Err(err).Msg("Close message error")
-		}
-		cancelFn()
-		log.Debug().Msg("Cancel request")
-		return
-	}()
-
-	go func() {
 		select {
-		case <-ctx.Done():
+		case <-requestCtx.Done():
 			return
 		case <-p.ctx.Done():
 			log.Debug().Msg("Send close message")
@@ -205,7 +194,7 @@ func (p *Proxy) proxy(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	requestBodyR, requestBodyW := io.Pipe()
-	request, err := http.NewRequestWithContext(ctx, r.Method, r.URL.String(), requestBodyR)
+	request, err := http.NewRequestWithContext(requestCtx, r.Method, r.URL.String(), requestBodyR)
 	if err != nil {
 		log.Warn().Err(err).Msg("error preparing request:")
 		return
@@ -233,7 +222,7 @@ func (p *Proxy) proxy(w http.ResponseWriter, r *http.Request) {
 	responseBodyR, responseBodyW := io.Pipe()
 	response := newInMemoryResponseWriter(responseBodyW)
 	go func() {
-		<-ctx.Done()
+		<-requestCtx.Done()
 		log.Debug().Msg("closing pipes")
 		_ = requestBodyW.CloseWithError(io.EOF)
 		_ = responseBodyW.CloseWithError(io.EOF)
@@ -260,7 +249,7 @@ func (p *Proxy) proxy(w http.ResponseWriter, r *http.Request) {
 		}()
 		for {
 			select {
-			case <-ctx.Done():
+			case <-requestCtx.Done():
 				log.Debug().Msg("read loop done")
 				return
 			default:
@@ -298,7 +287,7 @@ func (p *Proxy) proxy(w http.ResponseWriter, r *http.Request) {
 			}()
 			for {
 				select {
-				case <-ctx.Done():
+				case <-requestCtx.Done():
 					log.Debug().Msg("ping loop done")
 					return
 				case <-ticker.C:
@@ -322,7 +311,7 @@ func (p *Proxy) proxy(w http.ResponseWriter, r *http.Request) {
 
 	for scanner.Scan() {
 		select {
-		case <-ctx.Done():
+		case <-requestCtx.Done():
 			log.Debug().Msg("gracefully stopping websocket")
 			_ = conn.WriteControl(websocket.CloseMessage, nil, time.Now().Add(p.writeDuration))
 			return
