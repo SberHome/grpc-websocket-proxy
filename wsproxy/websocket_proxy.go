@@ -36,6 +36,7 @@ type Proxy struct {
 	pingWait               time.Duration
 	pongWait               time.Duration
 	writeDuration          time.Duration
+	ctx                    context.Context
 }
 
 func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -133,7 +134,7 @@ func defaultHeaderForwarder(header string) bool {
 //   Authorization: Bearer foobar
 //
 // Method can be overwritten with the MethodOverrideParam get parameter in the requested URL
-func WebsocketProxy(h http.Handler, opts ...Option) http.Handler {
+func WebsocketProxy(ctx context.Context, h http.Handler, opts ...Option) http.Handler {
 	p := &Proxy{
 		h:                   h,
 		methodOverrideParam: defaultMethodOverrideParam,
@@ -141,6 +142,7 @@ func WebsocketProxy(h http.Handler, opts ...Option) http.Handler {
 		authHeaderName:      defaultAuthHeaderName,
 		headerForwarder:     defaultHeaderForwarder,
 		writeDuration:       defaultWriteDuration,
+		ctx:                 ctx,
 	}
 	for _, o := range opts {
 		o(p)
@@ -175,6 +177,17 @@ func (p *Proxy) proxy(w http.ResponseWriter, r *http.Request) {
 
 	ctx, cancelFn := context.WithCancel(r.Context())
 	defer cancelFn()
+
+	go func() {
+		<-p.ctx.Done()
+		log.Debug().Msg("Send close message")
+		if err = conn.WriteControl(websocket.CloseMessage, []byte(""), time.Now().Add(p.writeDuration)); err != nil {
+			log.Debug().Err(err).Msg("Close message error")
+		}
+		cancelFn()
+		log.Debug().Msg("Cancel request")
+		return
+	}()
 
 	requestBodyR, requestBodyW := io.Pipe()
 	request, err := http.NewRequestWithContext(ctx, r.Method, r.URL.String(), requestBodyR)
